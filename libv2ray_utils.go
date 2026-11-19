@@ -1,3 +1,4 @@
+
 package libv2ray
 
 import (
@@ -7,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -18,11 +20,8 @@ import (
 	coreserial "github.com/xtls/xray-core/infra/conf/serial"
 )
 
-// QueryAllOutboundTrafficStats retrieves and resets all outbound traffic counters.
-// Returns a single-line text in format: tag,direction,value;tag,direction,value;
-// Returns an empty string if the stats manager is not initialized or no counters exist.
 func (x *CoreController) QueryAllOutboundTrafficStats() string {
-	if x.statsManager == nil {
+	if x == nil || x.statsManager == nil {
 		return ""
 	}
 
@@ -37,6 +36,7 @@ func (x *CoreController) QueryAllOutboundTrafficStats() string {
 		tag := parts[1]
 		direct := parts[3]
 		value := counter.Set(0)
+
 		if value <= 0 {
 			return true
 		}
@@ -47,29 +47,32 @@ func (x *CoreController) QueryAllOutboundTrafficStats() string {
 		b.WriteByte(',')
 		b.WriteString(strconv.FormatInt(value, 10))
 		b.WriteByte(';')
+
 		return true
 	})
+
 	return b.String()
 }
 
-// MeasureDelay measures network latency to a specified URL through the current core instance
-// Uses a 12-second timeout context and returns the round-trip time in milliseconds
-// An error is returned if the connection fails or returns an unexpected status
-func (x *CoreController) MeasureDelay(url string) (int64, error) {
+func (x *CoreController) MeasureDelay(targetURL string) (int64, error) {
+	if x == nil || !x.IsRunning || x.coreInstance == nil {
+		return -1, errors.New("core is not running")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
 
-	return measureInstDelay(ctx, x.coreInstance, url)
+	return measureInstDelay(ctx, x.coreInstance, targetURL)
 }
 
-// MeasureOutboundDelay measures the outbound delay for a given configuration and URL
-func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error) {
-	config, err := coreserial.LoadJSONConfig(strings.NewReader(ConfigureFileContent))
+func MeasureOutboundDelay(configureFileContent string, targetURL string) (int64, error) {
+	config, err := coreserial.LoadJSONConfig(strings.NewReader(configureFileContent))
 	if err != nil {
 		return -1, fmt.Errorf("config load error: %w", err)
 	}
 
 	config.Inbound = nil
+
 	var essentialApp []*serial.TypedMessage
 	for _, app := range config.App {
 		if app.Type == "xray.app.proxyman.OutboundConfig" ||
@@ -86,25 +89,35 @@ func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error
 	}
 
 	if err := inst.Start(); err != nil {
+		inst.Close()
 		return -1, fmt.Errorf("startup failed: %w", err)
 	}
+
 	defer inst.Close()
-	return measureInstDelay(context.Background(), inst, url)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+
+	return measureInstDelay(ctx, inst, targetURL)
 }
 
-// measureInstDelay measures the delay for an instance to a given URL
-func measureInstDelay(ctx context.Context, inst *core.Instance, url string) (int64, error) {
+func measureInstDelay(ctx context.Context, inst *core.Instance, targetURL string) (int64, error) {
 	if inst == nil {
 		return -1, errors.New("core instance is nil")
 	}
 
-	if url == "" {
-		url = "https://www.google.com/generate_204"
+	if targetURL == "" {
+		targetURL = "https://www.google.com/generate_204"
+	}
+
+	parsedURL, err := url.ParseRequestURI(targetURL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		return -1, errors.New("invalid ping URL")
 	}
 
 	tr := &http.Transport{
 		TLSHandshakeTimeout: 6 * time.Second,
-		DisableKeepAlives:   false,
+		DisableKeepAlives:   true,
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			dest, err := corenet.ParseDestination(fmt.Sprintf("%s:%s", network, addr))
 			if err != nil {
@@ -119,24 +132,25 @@ func measureInstDelay(ctx context.Context, inst *core.Instance, url string) (int
 		Timeout:   12 * time.Second,
 	}
 
-	var minDuration int64 = -1
-	success := false
-	var lastErr error
-
 	defer tr.CloseIdleConnections()
 
+	var minDuration int64 = -1
+	var lastErr error
+	success := false
+
 	const attempts = 2
+
 	for i := 0; i < attempts; i++ {
 		select {
 		case <-ctx.Done():
-			if !success {
-				return -1, ctx.Err()
+			if success {
+				return minDuration, nil
 			}
-			return minDuration, nil
+			return -1, ctx.Err()
 		default:
 		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to create HTTP request: %w", err)
 			continue
@@ -149,28 +163,34 @@ func measureInstDelay(ctx context.Context, inst *core.Instance, url string) (int
 			continue
 		}
 
-		_, err = io.Copy(io.Discard, resp.Body)
+		_, readErr := io.Copy(io.Discard, resp.Body)
 		resp.Body.Close()
+
+		if readErr != nil {
+			lastErr = fmt.Errorf("failed to read response body: %w", readErr)
+			continue
+		}
 
 		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 			lastErr = fmt.Errorf("invalid status: %s", resp.Status)
 			continue
 		}
 
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read response body: %w", err)
-			continue
-		}
-
 		duration := time.Since(start).Milliseconds()
+
 		if !success || duration < minDuration {
 			minDuration = duration
 		}
 
 		success = true
 	}
+
 	if !success {
+		if lastErr == nil {
+			lastErr = errors.New("ping failed")
+		}
 		return -1, lastErr
 	}
+
 	return minDuration, nil
 }
