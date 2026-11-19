@@ -1,3 +1,8 @@
+
+# ==========================================
+# PRIME NET VPN
+# ==========================================
+
 # Ignore editor directories and files
 .idea/
 .vscode/
@@ -17,7 +22,8 @@ demo/
 assets/
 
 # Ignore V2Ray library files
-libv2ray*.[a|j]ar
+libv2ray*.jar
+libv2ray*.aar
 
 # Ignore binary files
 *.exe
