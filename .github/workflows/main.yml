@@ -1,4 +1,5 @@
-name: Build
+
+name: Build PRIME NET VPN
 
 on:
   workflow_dispatch:
@@ -18,9 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
-    - name: Checkout repository
+    - name: Checkout PRIME NET VPN
       uses: actions/checkout@v6
-      
+
     - name: Setup Golang
       uses: actions/setup-go@v6
       with:
@@ -30,7 +31,7 @@ jobs:
       run: |
         go install golang.org/x/mobile/cmd/gomobile@latest
         export PATH=$PATH:~/go/bin
-        
+
     - name: Setup Android SDK
       uses: android-actions/setup-android@v4
       with:
@@ -45,7 +46,7 @@ jobs:
           --install "ndk;29.0.14206865"
         echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> $GITHUB_ENV
 
-    - name: Build
+    - name: Build PRIME NET VPN
       run: |
          mkdir -p assets data
          bash gen_assets.sh download
@@ -53,16 +54,16 @@ jobs:
          gomobile init
          go mod tidy
          gomobile bind -v -androidapi 24 -trimpath -ldflags='-s -w -buildid= -checklinkname=0' ./
- 
+
     - name: Upload build artifacts
       if: github.event.inputs.release_tag == ''
       uses: actions/upload-artifact@v7
       with:
-        name: libv2ray
+        name: PRIME-NET-VPN-libv2ray
         path: |
           ${{ github.workspace }}/libv2ray*r
 
-    - name: Upload AndroidLibXrayLite to release
+    - name: Upload PRIME NET VPN to release
       if: github.event.inputs.release_tag != ''
       uses: svenstaro/upload-release-action@v2
       with:
