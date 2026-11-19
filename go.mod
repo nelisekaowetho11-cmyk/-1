@@ -1,4 +1,7 @@
+
 module github.com/2dust/AndroidLibXrayLite
+
+// PRIME NET VPN - Xray Engine Dependencies
 
 go 1.27
 
@@ -21,7 +24,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.4.2 // indirect
 	github.com/koron/go-ssdp v0.0.4 // indirect
 	github.com/kr/text v0.2.0 // indirect
-	github.com/libp2p/go-nat v1.0.1-0.20250821073202-01afc089f138 // indirect
+	github.com/libp2p/go-nat v0.1.0 // indirect
 	github.com/libp2p/go-netroute v0.2.1 // indirect
 	github.com/miekg/dns v1.1.73 // indirect
 	github.com/molecule-man/go-brrr v1.2.0 // indirect
